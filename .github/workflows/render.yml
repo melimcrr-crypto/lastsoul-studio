@@ -1,0 +1,155 @@
+name: Render samples
+
+# رایگان و بی‌نهایت روی ریپوی پابلیک: ۴ vCPU / ۱۶GB / ۱۴GB SSD
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["blender/**", "manim/**", "edit/**", ".github/workflows/render.yml"]
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_URL: https://download.blender.org/release/Blender4.2/blender-4.2.9-linux-x64.tar.xz
+
+jobs:
+  # ─────────────────────────── Blender: سه استیل ───────────────────────────
+  blender_stills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: wide
+            samples: 96
+          - variant: close
+            samples: 96
+          - variant: low
+            samples: 96
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: نصب Blender (کش‌شده)
+        uses: actions/cache@v4
+        id: bcache
+        with:
+          path: /opt/blender
+          key: blender-4.2.9
+
+      - name: دانلود Blender
+        if: steps.bcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon0 libxi6 libxxf86vm1 \
+            libxfixes3 libxrender1 libgl1 libegl1 libsm6 libice6 libgomp1 libxkbcommon-x11-0
+          curl -sL "$BLENDER_URL" -o /tmp/bl.tar.xz
+          mkdir -p /opt/blender
+          sudo tar -xJf /tmp/bl.tar.xz -C /opt/blender --strip-components=1
+
+      - name: رندر ${{ matrix.variant }}
+        run: |
+          mkdir -p render
+          /opt/blender/blender -b --factory-startup -P blender/scene.py -- \
+            ${{ matrix.variant }} 1600 900 ${{ matrix.samples }} 1 render \
+            2>&1 | tail -5
+          ls -la render
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blender-${{ matrix.variant }}
+          path: render/*.png
+          retention-days: 3
+
+  # ─────────────────────────── Blender: کلیپ انیمیشن ───────────────────────────
+  blender_anim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: bcache
+        with:
+          path: /opt/blender
+          key: blender-4.2.9
+      - name: دانلود Blender
+        if: steps.bcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon0 libxi6 libxxf86vm1 \
+            libxfixes3 libxrender1 libgl1 libegl1 libsm6 libice6 libgomp1 libxkbcommon-x11-0
+          curl -sL "$BLENDER_URL" -o /tmp/bl.tar.xz
+          mkdir -p /opt/blender
+          sudo tar -xJf /tmp/bl.tar.xz -C /opt/blender --strip-components=1
+
+      - name: رندر ۴۸ فریم (پوش دوربین)
+        run: |
+          mkdir -p render
+          /opt/blender/blender -b --factory-startup -P blender/scene.py -- \
+            anim 1280 720 48 48 render 2>&1 | tail -3
+          ls render | head -3; ls render | wc -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blender-anim-frames
+          path: render/*.png
+          retention-days: 3
+
+  # ─────────────────────────── Manim: لایهٔ تایپ ───────────────────────────
+  manim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: نصب پیش‌نیازهای سیستمی
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpango1.0-dev libcairo2-dev ffmpeg
+      - name: نصب manim
+        run: pip install -q manim==0.22.0
+      - name: رندر سه صحنه
+        run: |
+          mkdir -p render
+          manim -qh --format=mp4 --media_dir ./media manim/type.py Card Title EndCard 2>&1 | tail -4
+          find media -name "*.mp4" -exec cp {} render/ \;
+          ls -la render
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manim-clips
+          path: render/*.mp4
+          retention-days: 3
+
+  # ─────────────────────────── بسته‌بندی ───────────────────────────
+  package:
+    needs: [blender_stills, blender_anim, manim]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: نصب ffmpeg + Pillow
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q Pillow
+      - name: جمع‌آوری artifact‌ها
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: ساخت کانتکت‌شیت و ریل
+        run: |
+          find artifacts -type f | head -30
+          python edit/assemble.py artifacts dist
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DIST-samples
+          path: dist/*
+          retention-days: 14
