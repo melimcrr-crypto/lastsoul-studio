@@ -106,12 +106,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements.txt
       - name: نصب پیش‌نیازهای سیستمی
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libpango1.0-dev libcairo2-dev ffmpeg
       - name: نصب manim
-        run: pip install -q manim==0.22.0
+        run: pip install -q -r requirements.txt
       - name: رندر سه صحنه
         run: |
           mkdir -p render
